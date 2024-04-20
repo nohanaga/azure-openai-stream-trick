@@ -1,17 +1,16 @@
 import json
 import os
-import openai
+from openai import AsyncAzureOpenAI,AzureOpenAI
 from quart import Quart
 from quart import Blueprint, Response, current_app, render_template, request, stream_with_context
 
 bp = Blueprint("app", __name__, template_folder="templates", static_folder="static")
 
-@bp.before_app_serving
-async def configure_openai():
-    openai.api_base = os.getenv("AZURE_OPENAI_ENDPOINT")
-    openai.api_version = "2023-07-01-preview"
-    openai.api_type = "azure"
-    openai.api_key = os.getenv("AZURE_OPENAI_KEY")
+client = AsyncAzureOpenAI(
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+    api_version="2024-02-01"
+)
 
 @bp.get("/")
 async def index():
@@ -23,26 +22,23 @@ async def chat_handler():
 
     @stream_with_context
     async def response_stream():
-        chat_coroutine = openai.ChatCompletion.acreate(
-            engine = "gpt-35-turbo", # The deployment name you chose when you deployed the GPT-35-turbo or GPT-4 model.
-            messages = [
+        chat_coroutine = client.chat.completions.create(
+            model="gpt-35-turbo",
+            messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": request_message},
             ],
-            temperature = 0.7,
+            temperature = 0.0,
             max_tokens = 1024,
-            top_p = 0.95,
-            frequency_penalty = 0,
-            presence_penalty = 0,
-            stop = None,
-            stream = True,
+            stream=True,
         )
-        async for event in await chat_coroutine:
-            # "2023-07-01-preview" API version has a bug where first response has empty choices
-            if event["choices"]:
-                current_app.logger.info(event)
-                yield json.dumps(event, ensure_ascii=False) + "\n"
 
+        async for event_chunk in await chat_coroutine:
+            event = event_chunk.model_dump()  # Convert pydantic model to dict
+            if event["choices"]:
+                #print(event)
+                yield json.dumps(event, ensure_ascii=False) + "\n"
+                
     return Response(response_stream())
 
 if __name__ == "__main__":
